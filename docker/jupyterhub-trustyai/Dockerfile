@@ -10,5 +10,6 @@ RUN apt-get update && apt-get install -qq --yes --no-install-recommends \
 RUN apt-get update && apt-get install -qq --yes --no-install-recommends \
     default-jdk
 
+
 # install TrustyAI python package...
 RUN pip install trustyai
