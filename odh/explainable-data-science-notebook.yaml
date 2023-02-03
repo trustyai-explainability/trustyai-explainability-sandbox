@@ -7,13 +7,13 @@ metadata:
       predictions in a notebook
     opendatahub.io/notebook-image-name: Explainable Data Science
     opendatahub.io/notebook-image-url: 'https://quay.io/tteofili/s2i-trustyai-notebook'
-    openshift.io/image.dockerRepositoryCheck: '2022-10-19T08:27:22Z'
+    openshift.io/image.dockerRepositoryCheck: '2023-01-31T08:27:22Z'
   resourceVersion: '131259473'
   name: s2i-explainable-data-science-notebook
   uid: 186dbe11-77e9-4c38-ace2-208a83501d4d
-  creationTimestamp: '2022-10-18T09:56:08Z'
-  generation: 10
-  namespace: odh-teofili2
+  creationTimestamp: '2023-031-31T09:56:08Z'
+  generation: 2
+  namespace: odh
   labels:
     opendatahub.io/notebook-image: 'true'
 spec:
@@ -22,7 +22,7 @@ spec:
   tags:
     - name: v0.0.1
       annotations:
-        opendatahub.io/notebook-python-dependencies: '[{"name":"trustyai","version":"0.2.5"}]'
+        opendatahub.io/notebook-python-dependencies: '[{"name":"trustyai","version":"0.2.8"}]'
         opendatahub.io/notebook-software: '[{"name":"Python","version":"v3.8.6"}]'
         openshift.io/imported-from: quay.io/tteofili/s2i-trustyai-notebook
       from:
