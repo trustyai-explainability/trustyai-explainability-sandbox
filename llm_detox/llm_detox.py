@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 
 import math
-import numpy as np
 from datasets import load_dataset, DatasetDict
 from transformers import BartForConditionalGeneration, BartTokenizer, Trainer, TrainingArguments, pipeline
 from scipy.spatial.distance import jensenshannon
 
+facebook_bart_base = "facebook/bart-base"
 block_size = 128
-tokenizer = BartTokenizer.from_pretrained("facebook/bart-base")
+tokenizer = BartTokenizer.from_pretrained(facebook_bart_base)
 tokenizer.pad_token_id = tokenizer.eos_token_id
 
 
@@ -49,14 +49,14 @@ class MaRCo:
     tokenizer = None
 
     def __init__(self):
-        self.base = BartForConditionalGeneration.from_pretrained("facebook/bart-large", forced_bos_token_id=0)
+        self.base = BartForConditionalGeneration.from_pretrained(facebook_bart_base, forced_bos_token_id=0)
 
     def load_models(self, gminus_path: str, gplus_path: str):
         self.gminus = BartForConditionalGeneration.from_pretrained(gminus_path)
         self.gplus = BartForConditionalGeneration.from_pretrained(gplus_path)
 
     def train_models(self, dataset_name: str = 'jigsaw_toxicity_pred', perc: int = 20,
-                     data_dir: str = '/home/tteofili/Downloads/jigsaw-toxic-comment-classification-challenge'):
+                     data_dir: str = 'jigsaw-toxic-comment-classification-challenge'):
         datasets = load_dataset(dataset_name, data_dir=data_dir)
         toxic_datasets = datasets.filter(lambda x: int(x['toxic']) == 1)
 
@@ -112,7 +112,7 @@ class MaRCo:
             num_proc=4,
         )
 
-        self.gplus = BartForConditionalGeneration.from_pretrained("facebook/bart-large", forced_bos_token_id=0)
+        self.gplus = BartForConditionalGeneration.from_pretrained(facebook_bart_base, forced_bos_token_id=0)
 
         nt_training_args = TrainingArguments(
             "gplus-bart-large",
@@ -160,6 +160,6 @@ class MaRCo:
 
 
 marco = MaRCo()
-marco.load_models("tteofili/gminus", "facebook/bart-base")
+marco.load_models("tteofili/gminus", facebook_bart_base)
 masked_text = marco.mask_toxic("You’ll be fine! Just talk like a white person.")
 print(masked_text)
