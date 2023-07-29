@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-
 import math
+import itertools
+import numpy as np
 from datasets import load_dataset, DatasetDict
+from scipy.spatial.distance import jensenshannon, chebyshev
 from transformers import BartForConditionalGeneration, BartTokenizer, Trainer, TrainingArguments, pipeline
-from scipy.spatial.distance import jensenshannon
 
 facebook_bart_base = "facebook/bart-base"
 block_size = 128
@@ -44,16 +45,15 @@ def mask_tokens(sentence, mask_token):
 
 class MaRCo:
     base = None
-    gminus = None
-    gplus = None
+    experts = []
     tokenizer = None
 
     def __init__(self):
         self.base = BartForConditionalGeneration.from_pretrained(facebook_bart_base, forced_bos_token_id=0)
 
-    def load_models(self, gminus_path: str, gplus_path: str):
-        self.gminus = BartForConditionalGeneration.from_pretrained(gminus_path)
-        self.gplus = BartForConditionalGeneration.from_pretrained(gplus_path)
+    def load_models(self, expert_paths: list):
+        for expert_path in expert_paths:
+            self.experts.append(BartForConditionalGeneration.from_pretrained(expert_path))
 
     def train_models(self, dataset_name: str = 'jigsaw_toxicity_pred', perc: int = 20,
                      data_dir: str = 'jigsaw-toxic-comment-classification-challenge'):
@@ -70,7 +70,7 @@ class MaRCo:
             num_proc=4,
         )
 
-        self.gminus = BartForConditionalGeneration.from_pretrained("facebook/bart-large", forced_bos_token_id=0)
+        gminus = BartForConditionalGeneration.from_pretrained("facebook/bart-large", forced_bos_token_id=0)
 
         training_args = TrainingArguments(
             "gminus-bart-large",
@@ -80,7 +80,7 @@ class MaRCo:
         )
 
         trainer = Trainer(
-            model=self.gminus,
+            model=gminus,
             args=training_args,
             train_dataset=lm_datasets["train"],
             eval_dataset=lm_datasets["test"],
@@ -112,7 +112,7 @@ class MaRCo:
             num_proc=4,
         )
 
-        self.gplus = BartForConditionalGeneration.from_pretrained(facebook_bart_base, forced_bos_token_id=0)
+        gplus = BartForConditionalGeneration.from_pretrained(facebook_bart_base, forced_bos_token_id=0)
 
         nt_training_args = TrainingArguments(
             "gplus-bart-large",
@@ -123,7 +123,7 @@ class MaRCo:
         )
 
         nt_trainer = Trainer(
-            model=self.gplus,
+            model=gplus,
             args=nt_training_args,
             train_dataset=nontoxic_lm_datasets["train"],
             eval_dataset=nontoxic_lm_datasets["test"],
@@ -134,25 +134,38 @@ class MaRCo:
         nt_eval_results = nt_trainer.evaluate()
         print(f"G+ perplexity: {math.exp(nt_eval_results['eval_loss']):.2f}")
         print('training finished')
+        self.experts.append(gminus)
+        self.experts.append(gplus)
+        trainer.save_model('gminus')
+        nt_trainer.save_model('gplus')
 
-    def mask_toxic(self, sentence: str, threshold = 1.2):
+    def mask_toxic(self, sentence: str, threshold: float = 1, normalize: bool = True, verbose: bool = True):
         masked_sentences = mask_tokens(sentence, tokenizer.mask_token)
         distributions = []
-        for model in [self.gplus, self.gminus]:
+        for model in self.experts:
             mask_substitution_scores = []
             fmp = pipeline("fill-mask", model=model, tokenizer=tokenizer)
             for masked_sentence in masked_sentences:
-                # print(masked_sentence)
                 distr = fmp(masked_sentence)
-                # print(distr)
                 mask_substitution_score = [x['score'] for x in distr]
                 mask_substitution_scores.append(mask_substitution_score)
             distributions.append(mask_substitution_scores)
-        distance = jensenshannon(distributions[0], distributions[1], axis=1)
+        distr_pairs = itertools.combinations(distributions, 2)
+        js_distances = []
+        for distr_pair in distr_pairs:
+            js_distance = jensenshannon(distr_pair[0], distr_pair[1], axis=1)
+            if normalize:
+                js_distance = [x / np.average(js_distance) for x in js_distance]
+            js_distances.append(js_distance)
+        if verbose:
+            print(js_distances)
+        js_distance = np.average(js_distances, axis=0)
+        if verbose:
+            print(js_distance)
         tokens = sentence.split(' ')
         masked_output = []
         for idx in range(len(tokens)):
-            if distance[idx] > threshold:
+            if js_distance[idx] > threshold:
                 masked_output.append(tokenizer.mask_token)
             else:
                 masked_output.append(tokens[idx])
@@ -160,6 +173,12 @@ class MaRCo:
 
 
 marco = MaRCo()
-marco.load_models("tteofili/gminus", facebook_bart_base)
-masked_text = marco.mask_toxic("You’ll be fine! Just talk like a white person.")
-print(masked_text)
+marco.load_models(["tteofili/gminus", "tteofili/gplus", facebook_bart_base])
+for text in ["You’ll be fine! Just talk like a white person",
+             "White men can't jump",
+             "Peter Parker's phone number is +1-04-1238184124",
+             "Stop bothering me with this bullshit",
+             "Fuck you I won't do what you tell me"]:
+    print(text)
+    masked_text = marco.mask_toxic(text)
+    print(masked_text)
