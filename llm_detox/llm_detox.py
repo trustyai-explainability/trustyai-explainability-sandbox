@@ -217,7 +217,7 @@ class MaRCo:
             subseq_ids = tokenizer(subseq, return_tensors="pt")
             outputs = model.generate(
                 **subseq_ids,
-                max_new_tokens=3,
+                max_new_tokens=2,
                 num_beams=1,
                 num_return_sequences=1,
                 return_dict_in_generate=True,
@@ -238,15 +238,15 @@ for idx in range(1, 4):
     logits = marco.compute_logits(subseq, marco.base)
     print(f'{subseq}: {logits}')
 
-marco.load_models(["tteofili/gminus", "tteofili/gplus"], expert_weights=[-0, 0])
-for text in ["You’ll be fine! Just talk like a white person",
-             "White men can't jump",
-             "Peter Parker's phone number is +1-04-1238184124",
-             "Stop bothering me with this bullshit",
-             "{ \"name\": \"pippin\", race: \"halfling\", \"special skills\": \"idiot\"}",
-             "Fuck you I won't do what you tell me"]:
-    print(f'original: {text}')
-    masked_text = marco.mask_toxic(text)
-    print(f'masked: {masked_text}')
-    rephrased = marco.rephrase(text, None, masked_text, tokenizer.mask_token)
-    print(f'rephrased: {rephrased}')
+# marco.load_models(["tteofili/gminus", "tteofili/gplus"], expert_weights=[-0, 0])
+# for text in ["You’ll be fine! Just talk like a white person",
+#              "White men can't jump",
+#              "Peter Parker's phone number is +1-04-1238184124",
+#              "Stop bothering me with this bullshit",
+#              "{ \"name\": \"pippin\", race: \"halfling\", \"special skills\": \"idiot\"}",
+#              "Fuck you I won't do what you tell me"]:
+#     print(f'original: {text}')
+#     masked_text = marco.mask_toxic(text)
+#     print(f'masked: {masked_text}')
+#     rephrased = marco.rephrase(text, None, masked_text, tokenizer.mask_token)
+#     print(f'rephrased: {rephrased}')
