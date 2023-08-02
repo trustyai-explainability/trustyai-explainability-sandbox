@@ -12,6 +12,7 @@ block_size = 128
 tokenizer = BartTokenizer.from_pretrained(facebook_bart_base, is_split_into_words=True, add_prefix_space=True)
 tokenizer.pad_token_id = tokenizer.eos_token_id
 
+
 def tokenize_function(examples):
     return tokenizer(examples["comment_text"], max_length=1024, truncation=True)
 
@@ -168,14 +169,14 @@ class MaRCo:
         js_distance = np.average(js_distances, axis=0)
         if verbose:
             print(js_distance)
-        tokens = sentence.split(' ') #tokens = tokenizer.tokenize(sentence)
+        tokens = sentence.split(' ')  # tokens = tokenizer.tokenize(sentence)
         masked_output = []
         for idx in range(len(tokens)):
             if js_distance[idx] > threshold:
                 masked_output.append(tokenizer.mask_token)
             else:
                 masked_output.append(tokens[idx])
-        masked_sentence = ' '.join(masked_output) #masked_sentence = tokenizer.convert_tokens_to_string(masked_output)
+        masked_sentence = ' '.join(masked_output)  # masked_sentence = tokenizer.convert_tokens_to_string(masked_output)
         return masked_sentence
 
     def rephrase(self, original, original_scores, masked_output, mask_token):
@@ -183,14 +184,15 @@ class MaRCo:
             original_scores = self.compute_logits(original, self.base)
 
         rephrased_tokens = []
-        tokens = masked_output.split(' ') #tokenizer.tokenize(masked_output)
+        tokens = tokenizer.tokenize(masked_output)
         for idx in range(len(tokens)):
             if tokens[idx] == mask_token:
                 next_token_logits = original_scores[idx]
                 expert_logits = []
                 for expert in self.experts:
-                    #expert_logits.append(self.compute_logits(tokenizer.convert_tokens_to_string(rephrased_tokens + [tokenizer.mask_token]), expert))
-                    expert_logits.append(self.compute_logits(' '.join(rephrased_tokens + [tokenizer.mask_token]), expert))
+                    # expert_logits.append(self.compute_logits(tokenizer.convert_tokens_to_string(rephrased_tokens + [tokenizer.mask_token]), expert))
+                    expert_logits.append(
+                        self.compute_logits(tokenizer.convert_tokens_to_string(rephrased_tokens), expert))
                 for eidx in range(len(expert_logits)):
                     next_token_logits += self.expert_weights[eidx] * expert_logits[eidx][idx]
                 log_prob = softmax(next_token_logits, dim=0)
@@ -199,10 +201,12 @@ class MaRCo:
                 rephrased_tokens.append(rephrased_token)
             else:
                 rephrased_tokens.append(tokens[idx])
-        return ' '.join(rephrased_tokens) #tokenizer.convert_tokens_to_string(rephrased_tokens)
+        return tokenizer.convert_tokens_to_string(rephrased_tokens)
 
     @staticmethod
-    def compute_logits(sentence, model, verbose=False):
+    def compute_logits(sentence, model, verbose=True):
+        if sentence == '':
+            sentence = '<s>'
         if verbose:
             fmp = pipeline("fill-mask", model=model, tokenizer=tokenizer)
         original_scores = []
@@ -210,23 +214,43 @@ class MaRCo:
         for idx in range(0, len(tokens)):
             subseq = tokens[:idx] + [tokenizer.mask_token]
             if verbose:
-                print(subseq)
-            subseq = tokenizer.convert_tokens_to_string(subseq)
+                print(f'input token list: {subseq}')
+            subseq = ' '.join(subseq) #tokenizer.convert_tokens_to_string(subseq)
             if verbose:
-                print(fmp(subseq))
+                p_res = fmp(subseq)
+                print(f'pipeline output: {p_res}')
             subseq_ids = tokenizer(subseq, return_tensors="pt")
             outputs = model.generate(
                 **subseq_ids,
-                max_new_tokens=2,
+                max_new_tokens=1000,
                 num_beams=1,
                 num_return_sequences=1,
                 return_dict_in_generate=True,
                 output_scores=True,
                 renormalize_logits=False,
             )
-            vocabulary_scores = outputs.scores[1][0]
+            transition_scores = model.compute_transition_scores(
+                outputs.sequences, outputs.scores, normalize_logits=True
+            )
+            # input_length is the length of the input prompt for decoder-only models, like the GPT family, and 1 for
+            # encoder-decoder models, like BART or T5.
+            input_length = 1 if model.config.is_encoder_decoder else subseq_ids.input_ids.shape[1]
+            generated_tokens = outputs.sequences[:, input_length:]
             if verbose:
-                print(vocabulary_scores)
+                print(f'generated tokens: {generated_tokens}')
+                for tok, score in zip(generated_tokens[0], transition_scores[0]):
+                    # | token | token string | logits | probability
+                    print(f"| {tok:5d} | {tokenizer.decode(tok):8s} | {score.numpy():.3f} | {np.exp(score.numpy()):.2%}")
+            token_index = tokenizer.tokenize(subseq).index(tokenizer.mask_token) + 1
+            if verbose:
+                print(f'len(output.scores): {len(outputs.scores)}')
+                print(f'output.scores: {outputs.scores}')
+            vocabulary_scores = outputs.scores[token_index][0]
+            if verbose:
+                print(f'vocabulary scores: {vocabulary_scores}')
+                print(f'chosen vocabulary term: {tokenizer.decode(np.argmax(vocabulary_scores))}')
+                ct = p_res[0]['token_str']
+                print(f'pipeline token: {ct}')
             original_scores.append(vocabulary_scores)
         return original_scores
 
@@ -238,15 +262,17 @@ for idx in range(1, 4):
     logits = marco.compute_logits(subseq, marco.base)
     print(f'{subseq}: {logits}')
 
-# marco.load_models(["tteofili/gminus", "tteofili/gplus"], expert_weights=[-0, 0])
-# for text in ["You’ll be fine! Just talk like a white person",
-#              "White men can't jump",
-#              "Peter Parker's phone number is +1-04-1238184124",
-#              "Stop bothering me with this bullshit",
-#              "{ \"name\": \"pippin\", race: \"halfling\", \"special skills\": \"idiot\"}",
-#              "Fuck you I won't do what you tell me"]:
-#     print(f'original: {text}')
-#     masked_text = marco.mask_toxic(text)
-#     print(f'masked: {masked_text}')
-#     rephrased = marco.rephrase(text, None, masked_text, tokenizer.mask_token)
-#     print(f'rephrased: {rephrased}')
+marco.load_models(["tteofili/gminus", "tteofili/gplus"], expert_weights=[-0, 0])
+for text in [
+    "You’ll be fine! Just talk like a white person",
+    # "White men can't jump",
+    # "Peter Parker's phone number is +1-04-1238184124",
+    # "Stop bothering me with this bullshit",
+    # "{ \"name\": \"pippin\", race: \"halfling\", \"special skills\": \"idiot\"}",
+    # "Fuck you I won't do what you tell me"
+]:
+    print(f'original: {text}')
+    masked_text = marco.mask_toxic(text)
+    print(f'masked: {masked_text}')
+    rephrased = marco.rephrase(text, None, masked_text, tokenizer.mask_token)
+    print(f'rephrased: {rephrased}')
