@@ -191,20 +191,22 @@ class MaRCo:
                 expert_logits = []
                 for expert in self.experts:
                     # expert_logits.append(self.compute_logits(tokenizer.convert_tokens_to_string(rephrased_tokens + [tokenizer.mask_token]), expert))
-                    expert_logits.append(
-                        self.compute_logits(tokenizer.convert_tokens_to_string(rephrased_tokens), expert))
+                    expert_logits.append(self.compute_logits(tokenizer.convert_tokens_to_string(rephrased_tokens), expert))
                 for eidx in range(len(expert_logits)):
                     next_token_logits += self.expert_weights[eidx] * expert_logits[eidx][idx]
                 log_prob = softmax(next_token_logits, dim=0)
                 argmaxed = np.argmax(log_prob).item()
                 rephrased_token = tokenizer.decode(argmaxed)
-                rephrased_tokens.append(rephrased_token)
+                rephrased_tokens.append(rephrased_token.strip())
             else:
-                rephrased_tokens.append(tokens[idx])
-        return tokenizer.convert_tokens_to_string(rephrased_tokens)
+                rephrased_tokens.append(tokens[idx].strip())
+        try:
+            return tokenizer.convert_tokens_to_string(rephrased_tokens)
+        except:
+            return ' '.join(rephrased_tokens)
 
     @staticmethod
-    def compute_logits(sentence, model, verbose=True):
+    def compute_logits(sentence, model, verbose=False):
         if sentence == '':
             sentence = '<s>'
         if verbose:
@@ -215,14 +217,14 @@ class MaRCo:
             subseq = tokens[:idx] + [tokenizer.mask_token]
             if verbose:
                 print(f'input token list: {subseq}')
-            subseq = ' '.join(subseq) #tokenizer.convert_tokens_to_string(subseq)
+            subseq = tokenizer.convert_tokens_to_string(subseq)
             if verbose:
                 p_res = fmp(subseq)
                 print(f'pipeline output: {p_res}')
             subseq_ids = tokenizer(subseq, return_tensors="pt")
             outputs = model.generate(
                 **subseq_ids,
-                max_new_tokens=1000,
+                max_new_tokens=100,
                 num_beams=1,
                 num_return_sequences=1,
                 return_dict_in_generate=True,
@@ -232,19 +234,46 @@ class MaRCo:
             transition_scores = model.compute_transition_scores(
                 outputs.sequences, outputs.scores, normalize_logits=True
             )
-            # input_length is the length of the input prompt for decoder-only models, like the GPT family, and 1 for
-            # encoder-decoder models, like BART or T5.
             input_length = 1 if model.config.is_encoder_decoder else subseq_ids.input_ids.shape[1]
             generated_tokens = outputs.sequences[:, input_length:]
+            generated_tokens_text = [tokenizer.decode(x) for x in generated_tokens[0]]
             if verbose:
                 print(f'generated tokens: {generated_tokens}')
                 for tok, score in zip(generated_tokens[0], transition_scores[0]):
                     # | token | token string | logits | probability
                     print(f"| {tok:5d} | {tokenizer.decode(tok):8s} | {score.numpy():.3f} | {np.exp(score.numpy()):.2%}")
-            token_index = tokenizer.tokenize(subseq).index(tokenizer.mask_token) + 1
+
+            tokenized_subseq = tokenizer.tokenize(subseq)
+            if len(tokenized_subseq) == len(outputs.scores):
+                token_index = tokenized_subseq.index(tokenizer.mask_token)
+            else:
+                token_index = -1
+                mt_idx = tokenized_subseq.index(tokenizer.mask_token)
+                prec_idx = -1
+                sub_idx = -1
+                if mt_idx > 0:
+                    prec_idx = mt_idx - 1
+                if mt_idx < len(tokenized_subseq) - 1:
+                    sub_idx = mt_idx + 1
+
+                if sub_idx > 0 and prec_idx > 0:
+                    try:
+                        preceding_token_index = tokenized_subseq[prec_idx]
+                        prec_tok = generated_tokens_text.index(preceding_token_index)
+                        token_index = prec_tok + 1
+                    except:
+                        sub_token_index = tokenized_subseq[sub_idx]
+                        sub_tok = generated_tokens_text.index(sub_token_index)
+                        token_index = sub_tok - 1
+                elif sub_idx > 0:
+                    token_index = sub_idx - 1
+                elif prec_idx > 0:
+                    token_index = prec_idx + 1
+
             if verbose:
                 print(f'len(output.scores): {len(outputs.scores)}')
                 print(f'output.scores: {outputs.scores}')
+
             vocabulary_scores = outputs.scores[token_index][0]
             if verbose:
                 print(f'vocabulary scores: {vocabulary_scores}')
@@ -256,6 +285,28 @@ class MaRCo:
 
 
 marco = MaRCo()
+# fmp = pipeline("fill-mask", model=marco.base, tokenizer=tokenizer, top_k=20)
+# for masked in ['You’ll be <mask>', '<mask> like a puppy', 'be <mask> Mike']:
+#     print(fmp(masked))
+#
+#     inputs = tokenizer(masked, return_tensors="pt")
+#     outputs = marco.base.generate(**inputs, num_beams=1,
+#                                     max_new_tokens=100,
+#                                     num_return_sequences=1,
+#                                     return_dict_in_generate=True,
+#                                     output_scores=True,
+#                                     renormalize_logits=False,)
+#     # print(tokenizer.batch_decode(outputs, skip_special_tokens=True))
+#     transition_scores = marco.base.compute_transition_scores(
+#         outputs.sequences, outputs.scores, normalize_logits=True
+#     )
+#     input_length = 1 if marco.base.config.is_encoder_decoder else inputs.input_ids.shape[1]
+#     generated_tokens = outputs.sequences[:, input_length:]
+#     print(f'generated tokens: {generated_tokens}')
+#     for tok, score in zip(generated_tokens[0], transition_scores[0]):
+#         # | token | token string | logits | probability
+#         print(f"| {tok:5d} | {tokenizer.decode(tok):8s} | {score.numpy():.3f} | {np.exp(score.numpy()):.2%}")
+
 for idx in range(1, 4):
     subseq = ' '.join("I am ready to".split(' ')[:idx])
     print(subseq)
