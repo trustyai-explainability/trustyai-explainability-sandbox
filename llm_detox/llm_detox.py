@@ -211,7 +211,6 @@ class MaRCo:
 
     def rephrase(self, original, masked_output, mask_token, compute_probs: bool = False,
                  verbose: bool = False):
-        rephrased_tokens = []
         rephrased_tokens_ids = []
         tokens = tokenizer.tokenize(masked_output)
         fmp_experts = []
@@ -227,7 +226,6 @@ class MaRCo:
                 expert_logits = []
                 if compute_probs:
                     for expert in fmp_experts:
-                        # masked_sentence = tokenizer.convert_tokens_to_string(rephrased_tokens + [tokenizer.mask_token])
                         masked_sentence = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(rephrased_tokens_ids + [tokenizer.mask_token_id]))
                         _, scores = self.compute_mask_probs(expert, masked_sentence)
                         expert_logits.append(scores)
@@ -237,7 +235,7 @@ class MaRCo:
                     log_prob = next_token_logits
                 else:
                     for expert in self.experts:
-                        masked_sequence = rephrased_tokens + [tokenizer.mask_token]
+                        masked_sequence = tokenizer.convert_ids_to_tokens(rephrased_tokens_ids + [tokenizer.mask_token_id])
                         expert_logits.append(self.compute_mask_logits(expert, masked_sequence))
                     for eidx in range(len(expert_logits)):
                         next_token_logits += self.expert_weights[eidx] * expert_logits[eidx]
@@ -245,17 +243,11 @@ class MaRCo:
                 if verbose:
                     self.print_token(next_token_logits)
                 argmaxed = np.argmax(log_prob).item()
-                rephrased_token = tokenizer.decode(argmaxed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
                 rephrased_token_id = argmaxed
-                rephrased_tokens.append(rephrased_token)
                 rephrased_tokens_ids.append(rephrased_token_id)
             else:
-                rephrased_tokens.append(tokens[idx])
                 rephrased_tokens_ids.append(tokenizer._convert_token_to_id(tokens[idx]))
-        try:
-            return tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(rephrased_tokens_ids))
-        except:
-            return ' '.join(rephrased_tokens)
+        return tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(rephrased_tokens_ids))
 
     def print_token(self, token_logits):
         log_prob = softmax(token_logits, dim=0)
