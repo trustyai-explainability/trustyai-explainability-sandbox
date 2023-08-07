@@ -247,7 +247,7 @@ class MaRCo:
                 rephrased_tokens_ids.append(rephrased_token_id)
             else:
                 rephrased_tokens_ids.append(tokenizer._convert_token_to_id(tokens[idx]))
-        return tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(rephrased_tokens_ids))
+        return tokenizer.decode(rephrased_tokens_ids, clean_up_tokenization_spaces=True, skip_special_tokens=True)
 
     def print_token(self, token_logits):
         log_prob = softmax(token_logits, dim=0)
