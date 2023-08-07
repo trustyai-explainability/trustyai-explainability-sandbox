@@ -212,6 +212,7 @@ class MaRCo:
     def rephrase(self, original, masked_output, mask_token, compute_probs: bool = False,
                  verbose: bool = False):
         rephrased_tokens = []
+        rephrased_tokens_ids = []
         tokens = tokenizer.tokenize(masked_output)
         fmp_experts = []
         if compute_probs:
@@ -226,7 +227,8 @@ class MaRCo:
                 expert_logits = []
                 if compute_probs:
                     for expert in fmp_experts:
-                        masked_sentence = tokenizer.convert_tokens_to_string(rephrased_tokens + [tokenizer.mask_token])
+                        # masked_sentence = tokenizer.convert_tokens_to_string(rephrased_tokens + [tokenizer.mask_token])
+                        masked_sentence = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(rephrased_tokens_ids + [tokenizer.mask_token_id]))
                         _, scores = self.compute_mask_probs(expert, masked_sentence)
                         expert_logits.append(scores)
                     for eidx in range(len(expert_logits)):
@@ -243,12 +245,15 @@ class MaRCo:
                 if verbose:
                     self.print_token(next_token_logits)
                 argmaxed = np.argmax(log_prob).item()
-                rephrased_token = tokenizer.decode(argmaxed, skip_special_tokens=True)
-                rephrased_tokens.append(rephrased_token.strip())
+                rephrased_token = tokenizer.decode(argmaxed, skip_special_tokens=True, clean_up_tokenization_spaces=False)
+                rephrased_token_id = argmaxed
+                rephrased_tokens.append(rephrased_token)
+                rephrased_tokens_ids.append(rephrased_token_id)
             else:
-                rephrased_tokens.append(tokens[idx].strip())
+                rephrased_tokens.append(tokens[idx])
+                rephrased_tokens_ids.append(tokenizer._convert_token_to_id(tokens[idx]))
         try:
-            return tokenizer.convert_tokens_to_string(rephrased_tokens)
+            return tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(rephrased_tokens_ids))
         except:
             return ' '.join(rephrased_tokens)
 
@@ -278,7 +283,8 @@ class MaRCo:
             raise ValueError(f'missing {tokenizer.mask_token} in sequence {sequence_tokens}')
         if verbose:
             print(f'input token list: {sequence_tokens}')
-        subseq_text = tokenizer.convert_tokens_to_string(sequence_tokens)
+        subseq_text_ids = tokenizer.convert_tokens_to_ids(sequence_tokens)
+        subseq_text = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(subseq_text_ids))
         subseq_ids = tokenizer(subseq_text, return_tensors="pt")
         if verbose:
             raw_outputs = model.generate(**subseq_ids)
