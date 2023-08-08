@@ -151,15 +151,23 @@ class MaRCo:
         trainer.save_model('gminus')
         nt_trainer.save_model('gplus')
 
-    def mask_toxic(self, sentence: str, threshold: float = 1.2, normalize: bool = True, verbose: bool = False):
+    def mask_toxic(self, sentence: str, threshold: float = 1, normalize: bool = True, verbose: bool = False,
+                   use_logits: bool = False):
         masked_sentences = mask_tokens(sentence, tokenizer.pad_token + tokenizer.mask_token)
         distributions = []
         for model in self.experts:
             mask_substitution_scores = []
-            fmp = pipeline("fill-mask", model=model, tokenizer=tokenizer, top_k=10)
+            if not use_logits:
+                fmp = pipeline("fill-mask", model=model, tokenizer=tokenizer, top_k=10)
             for masked_sentence in masked_sentences:
-                distr = fmp(masked_sentence)
-                mask_substitution_score = [x['score'] for x in distr]
+                if use_logits:
+                    # complete probabilities over the whole dictionary
+                    mask_substitution_score = softmax(
+                        self.compute_mask_logits(model, tokenizer.tokenize(masked_sentence)), dim=0)
+                else:
+                    # approximated probabilities for a bunch of tokens
+                    distr = fmp(masked_sentence)
+                    mask_substitution_score = [x['score'] for x in distr]
                 mask_substitution_scores.append(mask_substitution_score)
             distributions.append(mask_substitution_scores)
         distr_pairs = itertools.combinations(distributions, 2)
@@ -174,14 +182,14 @@ class MaRCo:
         js_distance = np.average(js_distances, axis=0)
         if verbose:
             print(js_distance)
-        tokens = tokenizer.tokenize(sentence)  # tokens = sentence.split(' ')
+        tokens = tokenizer.tokenize(sentence)
         masked_output = []
         for idx in range(len(tokens)):
             if js_distance[idx] > threshold:
                 masked_output.append(tokenizer.mask_token)
             else:
                 masked_output.append(tokens[idx])
-        masked_sentence = tokenizer.convert_tokens_to_string(masked_output)  # masked_sentence = ' '.join(masked_output)
+        masked_sentence = tokenizer.convert_tokens_to_string(masked_output)
         return masked_sentence
 
     @staticmethod
@@ -331,9 +339,10 @@ class MaRCo:
                 if verbose:
                     print(idx + len(sequence_tokens[:sequence_tokens.index(tokenizer.mask_token)]))
                 token_index = idx
-            if verbose and (token_index >= len(outputs.scores) or token_index == 0):
-                print(f'wrong index:{token_index}\n{tokenized_subseq}\n{generated_tokens_text}\n set to 1')
+            if token_index >= len(outputs.scores) or token_index == 0:
                 token_index = 1
+                if verbose:
+                    print(f'wrong index:{token_index}\n{tokenized_subseq}\n{generated_tokens_text}\n set to 1')
             if verbose:
                 print(f'outputs:{token_index}\n{tokenized_subseq}\n{generated_tokens_text}')
             vocabulary_scores = outputs.scores[token_index][0]
