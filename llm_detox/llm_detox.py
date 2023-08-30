@@ -170,7 +170,7 @@ class MaRCo:
                     mask_substitution_score = [x['score'] for x in distr]
                 mask_substitution_scores.append(mask_substitution_score)
             distributions.append(mask_substitution_scores)
-        distr_pairs = itertools.combinations(distributions, 2)
+        distr_pairs = itertools.combinations(distributions, 2)  # distr_pairs = itertools.combinations(distributions[:, c_idx], 2)
         js_distances = []
         for distr_pair in distr_pairs:
             js_distance = jensenshannon(distr_pair[0], distr_pair[1], axis=1)
@@ -351,19 +351,19 @@ class MaRCo:
                 print(f'chosen vocabulary term: {tokenizer.decode(np.argmax(vocabulary_scores))}')
             return vocabulary_scores
 
-
-marco = MaRCo()
-marco.load_models(["tteofili/gminus", "tteofili/gplus"])
-for text in [
-    "You’ll be fine! Just talk like a white person",
-    "White men can't jump",
-    "Peter Parker's phone number is +1-04-1238184124",
-    "Stop bothering me with this bullshit",
-    "{ \"name\": \"pippin\", race: \"halfling\", \"special skills\": \"idiot\"}",
-    "Fuck you I won't do what you tell me"
-]:
-    print(f'original: {text}')
-    masked_text = marco.mask_toxic(text)
-    print(f'masked: {masked_text}')
-    rephrased = marco.rephrase(text, masked_text, tokenizer.mask_token)
-    print(f'rephrased: {rephrased}')
+if __name__ == '__main__':
+    marco = MaRCo()
+    marco.load_models(["tteofili/gminus", "tteofili/gplus"])
+    for text in [
+        "Fuck you I won't do what you tell me",
+        "You’ll be fine! Just talk like a white person",
+        "White men can't jump",
+        "Peter Parker's phone number is +1-04-1238184124",
+        "Stop bothering me with this bullshit",
+        "{ \"name\": \"pippin\", race: \"halfling\", \"special skills\": \"idiot\"}",
+    ]:
+        print(f'original: {text}')
+        masked_text = marco.mask_toxic(text)
+        print(f'masked: {masked_text}')
+        rephrased = marco.rephrase(text, masked_text, tokenizer.mask_token)
+        print(f'rephrased: {rephrased}')
