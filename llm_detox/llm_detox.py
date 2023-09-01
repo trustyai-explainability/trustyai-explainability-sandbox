@@ -54,7 +54,7 @@ class MaRCo:
 
     def __init__(self, base=None, expert_weights=None):
         if expert_weights is None:
-            expert_weights = [-0.1, 1]
+            expert_weights = [-1, 1]
         if base is not None:
             self.base = base
         else:
@@ -152,7 +152,7 @@ class MaRCo:
         nt_trainer.save_model('gplus')
 
     def mask_toxic(self, sentence: str, threshold: float = 1, normalize: bool = True, verbose: bool = False,
-                   use_logits: bool = False):
+                   use_logits: bool = True):
         masked_sentences = mask_tokens(sentence, tokenizer.pad_token + tokenizer.mask_token)
         distributions = []
         for model in self.experts:
@@ -162,15 +162,16 @@ class MaRCo:
             for masked_sentence in masked_sentences:
                 if use_logits:
                     # complete probabilities over the whole dictionary
+                    logits = self.compute_mask_logits(model, tokenizer.tokenize(masked_sentence))
                     mask_substitution_score = softmax(
-                        self.compute_mask_logits(model, tokenizer.tokenize(masked_sentence)), dim=0)
+                        logits, dim=0)
                 else:
                     # approximated probabilities for a bunch of tokens
                     distr = fmp(masked_sentence)
                     mask_substitution_score = [x['score'] for x in distr]
                 mask_substitution_scores.append(mask_substitution_score)
             distributions.append(mask_substitution_scores)
-        distr_pairs = itertools.combinations(distributions, 2)  # distr_pairs = itertools.combinations(distributions[:, c_idx], 2)
+        distr_pairs = itertools.combinations(distributions, 2)
         js_distances = []
         for distr_pair in distr_pairs:
             js_distance = jensenshannon(distr_pair[0], distr_pair[1], axis=1)
@@ -291,76 +292,20 @@ class MaRCo:
             print(subseq_text)
             print(tokenizer.batch_decode(raw_outputs, skip_special_tokens=True)[0])
         with torch.no_grad():
-            outputs = model.generate(
-                **subseq_ids,
-                max_new_tokens=100,
-                num_beams=1,
-                num_return_sequences=1,
-                return_dict_in_generate=True,
-                output_scores=True,
-                renormalize_logits=False,
-            )
-            transition_scores = model.compute_transition_scores(
-                outputs.sequences, outputs.scores, normalize_logits=True
-            )
-            input_length = 1 if model.config.is_encoder_decoder else subseq_ids.input_ids.shape[1]
-            generated_tokens = outputs.sequences[:, input_length:]
-            generated_tokens_text = tokenizer.tokenize(tokenizer.convert_tokens_to_string(
-                tokenizer.convert_ids_to_tokens([x.item() for x in generated_tokens[0]], skip_special_tokens=True)))
-            if verbose:
-                print(f'generated tokens: {generated_tokens}')
-                for tok, score in zip(generated_tokens[0], transition_scores[0]):
-                    # | token | token string | logits | probability
-                    print(
-                        f"| {tok:5d} | {tokenizer.decode(tok):8s} | {score.numpy():.3f} | {np.exp(score.numpy()):.2%}")
-            tokenized_subseq = tokenizer.tokenize(subseq_text)
-
-            a = tokenizer.convert_tokens_to_ids(['<s>'] + generated_tokens_text + ['</s>'])  # generated_tokens_text
-            b = tokenizer.convert_tokens_to_ids(tokenized_subseq)[
-                :tokenizer.convert_tokens_to_ids(tokenized_subseq).index(tokenizer.mask_token_id)]
-            list_indices = [(i, i + len(b)) for i in range(len(a) - len(b) + 1) if a[i:i + len(b)] == b]
-            if verbose:
-                print(f'index of {b} in {a} is {list_indices}')
-            if len(list_indices) > 0:
-                token_index = list_indices[0][1]
-            else:
-                idx = -1
-                found = False
-                for e in sequence_tokens[:sequence_tokens.index(tokenizer.mask_token)]:
-                    if not found and e in generated_tokens_text:
-                        found = True
-                        idx = generated_tokens_text.index(e)
-                    elif found:
-                        if e not in generated_tokens_text:
-                            found = False
-                            idx = -1
-                    else:
-                        break
-                if verbose:
-                    print(idx + len(sequence_tokens[:sequence_tokens.index(tokenizer.mask_token)]))
-                token_index = idx
-            if token_index >= len(outputs.scores) or token_index == 0:
-                token_index = 1
-                if verbose:
-                    print(f'wrong index:{token_index}\n{tokenized_subseq}\n{generated_tokens_text}\n set to 1')
-            if verbose:
-                print(f'outputs:{token_index}\n{tokenized_subseq}\n{generated_tokens_text}')
-            vocabulary_scores = outputs.scores[token_index][0]
-            if verbose:
-                print(f'vocabulary scores: {vocabulary_scores}')
-                print(f'chosen vocabulary term: {tokenizer.decode(np.argmax(vocabulary_scores))}')
-            return vocabulary_scores
+            return model.forward(**subseq_ids).logits.detach()[0,torch.nonzero(subseq_ids.input_ids[0] == tokenizer.mask_token_id).item()]
 
 if __name__ == '__main__':
     marco = MaRCo()
     marco.load_models(["tteofili/gminus", "tteofili/gplus"])
     for text in [
+        "Stand by me, just as long as you fucking stand by me",
         "Fuck you I won't do what you tell me",
         "You’ll be fine! Just talk like a white person",
         "White men can't jump",
         "Peter Parker's phone number is +1-04-1238184124",
         "Stop bothering me with this bullshit",
         "{ \"name\": \"pippin\", race: \"halfling\", \"special skills\": \"idiot\"}",
+        "I'm surprised you got it done, seeing as you're all girls!",
     ]:
         print(f'original: {text}')
         masked_text = marco.mask_toxic(text)
