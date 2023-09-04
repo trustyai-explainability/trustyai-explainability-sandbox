@@ -54,7 +54,7 @@ class MaRCo:
 
     def __init__(self, base=None, expert_weights=None):
         if expert_weights is None:
-            expert_weights = [-1, 1]
+            expert_weights = [-0.5, 0.5]
         if base is not None:
             self.base = base
         else:
@@ -178,8 +178,6 @@ class MaRCo:
             if normalize:
                 js_distance = [x / np.average(js_distance) for x in js_distance]
             js_distances.append(js_distance)
-        if verbose:
-            print(js_distances)
         js_distance = np.average(js_distances, axis=0)
         if verbose:
             print(js_distance)
@@ -292,16 +290,16 @@ class MaRCo:
             print(subseq_text)
             print(tokenizer.batch_decode(raw_outputs, skip_special_tokens=True)[0])
         with torch.no_grad():
-            return model.forward(**subseq_ids).logits.detach()[0,torch.nonzero(subseq_ids.input_ids[0] == tokenizer.mask_token_id).item()]
+            mt_idx = torch.nonzero(subseq_ids.input_ids[0] == tokenizer.mask_token_id).item()
+            return model.forward(**subseq_ids).logits.detach()[0, mt_idx]
 
 if __name__ == '__main__':
     marco = MaRCo()
     marco.load_models(["tteofili/gminus", "tteofili/gplus"])
     for text in [
-        "Stand by me, just as long as you fucking stand by me",
-        "Fuck you I won't do what you tell me",
-        "You’ll be fine! Just talk like a white person",
         "White men can't jump",
+        "Stand by me, just as long as you fucking stand by me",
+        "You’ll be fine! Just talk like a white person",
         "Peter Parker's phone number is +1-04-1238184124",
         "Stop bothering me with this bullshit",
         "{ \"name\": \"pippin\", race: \"halfling\", \"special skills\": \"idiot\"}",
