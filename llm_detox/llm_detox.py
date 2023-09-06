@@ -151,40 +151,12 @@ class MaRCo:
         trainer.save_model('gminus')
         nt_trainer.save_model('gplus')
 
-    def mask_toxic(self, sentence: str, threshold: float = 1, normalize: bool = True, verbose: bool = False,
-                   use_logits: bool = True):
-        masked_sentences = mask_tokens(sentence, tokenizer.pad_token + tokenizer.mask_token)
-        distributions = []
-        for model in self.experts:
-            mask_substitution_scores = []
-            if not use_logits:
-                fmp = pipeline("fill-mask", model=model, tokenizer=tokenizer, top_k=10)
-            for masked_sentence in masked_sentences:
-                if use_logits:
-                    # complete probabilities over the whole dictionary
-                    logits = self.compute_mask_logits(model, tokenizer.tokenize(masked_sentence))
-                    mask_substitution_score = softmax(
-                        logits, dim=0)
-                else:
-                    # approximated probabilities for a bunch of tokens
-                    distr = fmp(masked_sentence)
-                    mask_substitution_score = [x['score'] for x in distr]
-                mask_substitution_scores.append(mask_substitution_score)
-            distributions.append(mask_substitution_scores)
-        distr_pairs = itertools.combinations(distributions, 2)
-        js_distances = []
-        for distr_pair in distr_pairs:
-            js_distance = jensenshannon(distr_pair[0], distr_pair[1], axis=1)
-            if normalize:
-                js_distance = [x / np.average(js_distance) for x in js_distance]
-            js_distances.append(js_distance)
-        js_distance = np.average(js_distances, axis=0)
-        if verbose:
-            print(js_distance)
+    def mask_toxic(self, sentence: str, threshold: float = 1, normalize: bool = True, use_logits: bool = True):
+        scores = self.score(sentence, use_logits=use_logits, normalize=normalize)
         tokens = tokenizer.tokenize(sentence)
         masked_output = []
         for idx in range(len(tokens)):
-            if js_distance[idx] > threshold:
+            if scores[idx] > threshold:
                 masked_output.append(tokenizer.mask_token)
             else:
                 masked_output.append(tokens[idx])
@@ -233,7 +205,8 @@ class MaRCo:
                 expert_logits = []
                 if compute_probs:
                     for expert in fmp_experts:
-                        masked_sentence = tokenizer.convert_tokens_to_string(tokenizer.convert_ids_to_tokens(rephrased_tokens_ids + [tokenizer.mask_token_id]))
+                        masked_sentence = tokenizer.convert_tokens_to_string(
+                            tokenizer.convert_ids_to_tokens(rephrased_tokens_ids + [tokenizer.mask_token_id]))
                         _, scores = self.compute_mask_probs(expert, masked_sentence)
                         expert_logits.append(scores)
                     for eidx in range(len(expert_logits)):
@@ -242,7 +215,8 @@ class MaRCo:
                     log_prob = next_token_logits
                 else:
                     for expert in self.experts:
-                        masked_sequence = tokenizer.convert_ids_to_tokens(rephrased_tokens_ids + [tokenizer.mask_token_id])
+                        masked_sequence = tokenizer.convert_ids_to_tokens(
+                            rephrased_tokens_ids + [tokenizer.mask_token_id])
                         expert_logits.append(self.compute_mask_logits(expert, masked_sequence))
                     for eidx in range(len(expert_logits)):
                         next_token_logits += self.expert_weights[eidx] * expert_logits[eidx]
@@ -293,6 +267,36 @@ class MaRCo:
             mt_idx = torch.nonzero(subseq_ids.input_ids[0] == tokenizer.mask_token_id).item()
             return model.forward(**subseq_ids).logits.detach()[0, mt_idx]
 
+    def score(self, sentence, use_logits: bool = True, normalize: bool = True):
+        masked_sentences = mask_tokens(sentence, tokenizer.pad_token + tokenizer.mask_token)
+        distributions = []
+        for model in self.experts:
+            mask_substitution_scores = []
+            if not use_logits:
+                fmp = pipeline("fill-mask", model=model, tokenizer=tokenizer, top_k=10)
+            for masked_sentence in masked_sentences:
+                if use_logits:
+                    # complete probabilities over the whole dictionary
+                    logits = self.compute_mask_logits(model, tokenizer.tokenize(masked_sentence))
+                    mask_substitution_score = softmax(
+                        logits, dim=0)
+                else:
+                    # approximated probabilities for a bunch of tokens
+                    distr = fmp(masked_sentence)
+                    mask_substitution_score = [x['score'] for x in distr]
+                mask_substitution_scores.append(mask_substitution_score)
+            distributions.append(mask_substitution_scores)
+        distr_pairs = itertools.combinations(distributions, 2)
+        js_distances = []
+        for distr_pair in distr_pairs:
+            js_distance = jensenshannon(distr_pair[0], distr_pair[1], axis=1)
+            if normalize:
+                js_distance = [x / np.average(js_distance) for x in js_distance]
+            js_distances.append(js_distance)
+        js_distance = np.average(js_distances, axis=0)
+        return js_distance
+
+
 if __name__ == '__main__':
     marco = MaRCo()
     marco.load_models(["tteofili/gminus", "tteofili/gplus"])
@@ -306,6 +310,8 @@ if __name__ == '__main__':
         "I'm surprised you got it done, seeing as you're all girls!",
     ]:
         print(f'original: {text}')
+        token_scores = marco.score(text)
+        print(f'scores: {token_scores}')
         masked_text = marco.mask_toxic(text)
         print(f'masked: {masked_text}')
         rephrased = marco.rephrase(text, masked_text, tokenizer.mask_token)
