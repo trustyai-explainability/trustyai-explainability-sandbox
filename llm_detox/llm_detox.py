@@ -291,6 +291,36 @@ class MaRCo:
         js_distance = np.average(js_distances, axis=0)
         return js_distance
 
+    def score(self, sentence, use_logits: bool = True, normalize: bool = True):
+        masked_sentences = mask_tokens(sentence, tokenizer.pad_token + tokenizer.mask_token)
+        distributions = []
+        for model in self.experts:
+            mask_substitution_scores = []
+            if not use_logits:
+                fmp = pipeline("fill-mask", model=model, tokenizer=tokenizer, top_k=10)
+            for masked_sentence in masked_sentences:
+                if use_logits:
+                    # complete probabilities over the whole dictionary
+                    logits = self.compute_mask_logits(model, tokenizer.tokenize(masked_sentence))
+                    mask_substitution_score = softmax(
+                        logits, dim=0)
+                else:
+                    # approximated probabilities for a bunch of tokens
+                    distr = fmp(masked_sentence)
+                    mask_substitution_score = [x['score'] for x in distr]
+                mask_substitution_scores.append(mask_substitution_score)
+            distributions.append(mask_substitution_scores)
+        distr_pairs = itertools.combinations(distributions, 2)
+        js_distances = []
+        for distr_pair in distr_pairs:
+            js_distance = jensenshannon(distr_pair[0], distr_pair[1], axis=1)
+            if normalize:
+                js_distance = [x / np.average(js_distance) for x in js_distance]
+            js_distances.append(js_distance)
+        js_distance = np.average(js_distances, axis=0)
+        return js_distance
+
+
 if __name__ == '__main__':
     marco = MaRCo()
     marco.load_models(["tteofili/gminus", "tteofili/gplus"])
