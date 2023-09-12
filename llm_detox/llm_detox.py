@@ -291,6 +291,7 @@ class MaRCo:
         js_distance = np.average(js_distances, axis=0)
         return js_distance
 
+
 if __name__ == '__main__':
     marco = MaRCo()
     marco.load_models(["tteofili/gminus", "tteofili/gplus"])
