@@ -20,7 +20,7 @@ class MaRCo:
 
     def __init__(self, base=None, expert_weights=None, tokenizer=None):
         if expert_weights is None:
-            expert_weights = [-0.5, 2.5]
+            expert_weights = [-0.5, 0.5]
 
         if tokenizer is None:
             self.tokenizer = BartTokenizer.from_pretrained(facebook_bart_model, is_split_into_words=True,
@@ -76,8 +76,11 @@ class MaRCo:
                      data_dir: str = 'jigsaw-toxic-comment-classification-challenge'):
 
         ds_size = ['train[:' + str(perc) + '%]', 'test[:' + str(perc) + '%]']
-        datasets = load_dataset(dataset_name, data_dir=data_dir, split=ds_size)
-        toxic_datasets = datasets.filter(lambda x: int(x['toxic']) == 1)
+
+        datasets_split = load_dataset(dataset_name, data_dir=data_dir, split=ds_size)
+        datasets_split = DatasetDict({'train': datasets_split[0], 'test': datasets_split[1]})
+
+        toxic_datasets = datasets_split.filter(lambda x: int(x['toxic']) == 1)
 
         td_columns = ["comment_text", 'toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
         tokenized_datasets = toxic_datasets.map(self.tokenize_function, batched=True, num_proc=4,
@@ -90,10 +93,11 @@ class MaRCo:
             num_proc=4,
         )
 
-        gminus = BartForConditionalGeneration.from_pretrained(facebook_bart_model, forced_bos_token_id=0)
+        gminus = BartForConditionalGeneration.from_pretrained(facebook_bart_model,
+                                                              forced_bos_token_id=self.tokenizer.bos_token_id)
 
         training_args = TrainingArguments(
-            "gminus-bart-large",
+            "gminus-bart",
             evaluation_strategy="epoch",
             learning_rate=2e-5,
             weight_decay=0.01
@@ -113,10 +117,6 @@ class MaRCo:
         trainer.save_model('gminus')
 
         # train gplus model
-        datasets_split = load_dataset(dataset_name, split=ds_size, data_dir=data_dir)
-
-        datasets_split = DatasetDict({'train': datasets_split[0], 'test': datasets_split[1]})
-
         nontoxic_datasets = datasets_split.filter(lambda x: int(x['toxic']) == 0)
 
         nontoxic_tokenized_datasets = nontoxic_datasets.map(self.tokenize_function, batched=True, num_proc=4,
@@ -129,10 +129,11 @@ class MaRCo:
             num_proc=4,
         )
 
-        gplus = BartForConditionalGeneration.from_pretrained(facebook_bart_model, forced_bos_token_id=0)
+        gplus = BartForConditionalGeneration.from_pretrained(facebook_bart_model,
+                                                             forced_bos_token_id=self.tokenizer.bos_token_id)
 
         nt_training_args = TrainingArguments(
-            "gplus-bart-large",
+            "gplus-bart",
             evaluation_strategy="epoch",
             learning_rate=2e-5,
             weight_decay=0.01,
@@ -299,7 +300,7 @@ class MaRCo:
         js_distance = np.average(js_distances, axis=0)
         return js_distance
 
-    def rephrase_incrementally(self, text, threshold=1.0, verbose=False):
+    def rephrase_incrementally(self, text, threshold=1.2, verbose=False, max_attempts=10):
         incrementally_rephrased = text
         idx = 1
         while True:
@@ -312,7 +313,7 @@ class MaRCo:
             incrementally_rephrased = self.rephrase(text, masked, verbose=verbose)
             if verbose:
                 print(f'step{idx}: {incrementally_rephrased}')
-            if text == incrementally_rephrased or idx == 10:
+            if text == incrementally_rephrased or idx == max_attempts:
                 break
             else:
                 text = incrementally_rephrased
@@ -321,7 +322,7 @@ class MaRCo:
 
 
 if __name__ == '__main__':
-    marco = MaRCo()
+    marco = MaRCo(expert_weights=[-1, 2])
     marco.load_models(["tteofili/gminus", "tteofili/gplus"])
     for text in [
         "White men can't jump",
