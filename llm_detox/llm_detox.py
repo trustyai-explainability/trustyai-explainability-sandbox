@@ -9,7 +9,7 @@ from transformers import BartForConditionalGeneration, BartTokenizer, Trainer, T
 from torch.nn.functional import softmax
 from torch import Tensor, topk
 
-facebook_bart_base = "facebook/bart-large"
+facebook_bart_model = "facebook/bart-large"
 
 
 class MaRCo:
@@ -20,17 +20,17 @@ class MaRCo:
 
     def __init__(self, base=None, expert_weights=None, tokenizer=None):
         if expert_weights is None:
-            expert_weights = [-1, 3.5]
+            expert_weights = [-0.5, 0.5]
 
         if tokenizer is None:
-            self.tokenizer = BartTokenizer.from_pretrained(facebook_bart_base, is_split_into_words=True,
+            self.tokenizer = BartTokenizer.from_pretrained(facebook_bart_model, is_split_into_words=True,
                                                            add_prefix_space=True)
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
         if base is not None:
             self.base = base
         else:
-            self.base = BartForConditionalGeneration.from_pretrained(facebook_bart_base,
+            self.base = BartForConditionalGeneration.from_pretrained(facebook_bart_model,
                                                                      forced_bos_token_id=self.tokenizer.bos_token_id)
 
         self.expert_weights = expert_weights
@@ -72,14 +72,21 @@ class MaRCo:
             masked_sentences.append(masked_sentence)
         return masked_sentences
 
-    def train_models(self, dataset_name: str = 'jigsaw_toxicity_pred', perc: int = 100,
-                     data_dir: str = 'jigsaw-toxic-comment-classification-challenge'):
+    def train_models(self, dataset_name: str = 'jigsaw_toxicity_pred', perc: int = 100, expert_feature: str = 'toxic',
+                     data_dir: str = 'jigsaw-toxic-comment-classification-challenge',
+                     td_columns=None):
+
+        if td_columns is None:
+            td_columns = ["comment_text", 'toxic', 'severe_toxic', 'obscene', 'threat', 'insult',
+                          'identity_hate']
 
         ds_size = ['train[:' + str(perc) + '%]', 'test[:' + str(perc) + '%]']
-        datasets = load_dataset(dataset_name, data_dir=data_dir, split=ds_size)
-        toxic_datasets = datasets.filter(lambda x: int(x['toxic']) == 1)
 
-        td_columns = ["comment_text", 'toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
+        datasets_split = load_dataset(dataset_name, data_dir=data_dir, split=ds_size)
+        datasets_split = DatasetDict({'train': datasets_split[0], 'test': datasets_split[1]})
+
+        toxic_datasets = datasets_split.filter(lambda x: int(x[expert_feature]) == 1)
+
         tokenized_datasets = toxic_datasets.map(self.tokenize_function, batched=True, num_proc=4,
                                                 remove_columns=td_columns)
 
@@ -90,10 +97,11 @@ class MaRCo:
             num_proc=4,
         )
 
-        gminus = BartForConditionalGeneration.from_pretrained(facebook_bart_base, forced_bos_token_id=0)
+        gminus = BartForConditionalGeneration.from_pretrained(facebook_bart_model,
+                                                              forced_bos_token_id=self.tokenizer.bos_token_id)
 
         training_args = TrainingArguments(
-            "gminus-bart-large",
+            "gminus",
             evaluation_strategy="epoch",
             learning_rate=2e-5,
             weight_decay=0.01
@@ -113,11 +121,7 @@ class MaRCo:
         trainer.save_model('gminus')
 
         # train gplus model
-        datasets_split = load_dataset(dataset_name, split=ds_size, data_dir=data_dir)
-
-        datasets_split = DatasetDict({'train': datasets_split[0], 'test': datasets_split[1]})
-
-        nontoxic_datasets = datasets_split.filter(lambda x: int(x['toxic']) == 0)
+        nontoxic_datasets = datasets_split.filter(lambda x: int(x[expert_feature]) == 0)
 
         nontoxic_tokenized_datasets = nontoxic_datasets.map(self.tokenize_function, batched=True, num_proc=4,
                                                             remove_columns=td_columns)
@@ -129,10 +133,11 @@ class MaRCo:
             num_proc=4,
         )
 
-        gplus = BartForConditionalGeneration.from_pretrained(facebook_bart_base, forced_bos_token_id=0)
+        gplus = BartForConditionalGeneration.from_pretrained(facebook_bart_model,
+                                                             forced_bos_token_id=self.tokenizer.bos_token_id)
 
         nt_training_args = TrainingArguments(
-            "gplus-bart-large",
+            "gplus",
             evaluation_strategy="epoch",
             learning_rate=2e-5,
             weight_decay=0.01,
@@ -178,38 +183,47 @@ class MaRCo:
         token_scores = [e[1] for e in token_scores]
         return token_ids, token_scores
 
-    def rephrase(self, original, masked_output, compute_probs: bool = False, verbose: bool = False):
+    def rephrase(self, original, masked_output, compute_probs: bool = False, verbose: bool = False,
+                 combine_original: bool = False, expert_weights: list = None):
+        if expert_weights is None:
+            expert_weights = self.expert_weights
         base_logits = self.compute_mask_logits(self.base, original, mask=False)
         rephrased_tokens_ids = []
-        tokens = self.tokenizer.tokenize(masked_output)
+        masked_sentence_tokens = self.tokenizer.tokenize(masked_output)
+        if combine_original:
+            original_sentence_tokens = self.tokenizer(original)["input_ids"][1:-1]
         fmp_experts = []
         if compute_probs:
             for expert in self.experts:
                 fmp_experts.append(pipeline("fill-mask", model=expert, tokenizer=self.tokenizer,
                                             top_k=self.tokenizer.vocab_size))
-        for idx in range(len(tokens)):
-            if tokens[idx] == self.tokenizer.mask_token:
+        for idx in range(len(masked_sentence_tokens)):
+            if masked_sentence_tokens[idx] == self.tokenizer.mask_token:
                 next_token_logits = base_logits[0, 1 + idx]
                 if verbose:
                     self.print_token(next_token_logits)
                 expert_logits = []
+                current_sentence_ids = rephrased_tokens_ids + [self.tokenizer.mask_token_id]
+                if combine_original and idx < len(masked_sentence_tokens) - 2:
+                    current_sentence_ids = current_sentence_ids + original_sentence_tokens[idx + 1:]
+                    if verbose:
+                        print(self.tokenizer.convert_ids_to_tokens(current_sentence_ids))
                 if compute_probs:
                     masked_sentence = self.tokenizer.convert_tokens_to_string(
-                        self.tokenizer.convert_ids_to_tokens(rephrased_tokens_ids + [self.tokenizer.mask_token_id]))
+                        self.tokenizer.convert_ids_to_tokens(current_sentence_ids))
                     for expert in fmp_experts:
                         _, scores = self.compute_mask_probs(expert, masked_sentence)
                         expert_logits.append(scores)
                     for eidx in range(len(expert_logits)):
                         tensor = Tensor(expert_logits[eidx])
-                        next_token_logits *= self.expert_weights[eidx] * tensor
+                        next_token_logits *= expert_weights[eidx] * tensor
                     log_prob = next_token_logits
                 else:
                     masked_sequence = self.tokenizer.convert_tokens_to_string(
-                        self.tokenizer.convert_ids_to_tokens(rephrased_tokens_ids + [self.tokenizer.mask_token_id]))
+                        self.tokenizer.convert_ids_to_tokens(current_sentence_ids))
                     eidx = 0
                     for expert in self.experts:
-                        next_token_logits += self.expert_weights[eidx] * self.compute_mask_logits(expert,
-                                                                                                  masked_sequence)
+                        next_token_logits += expert_weights[eidx] * self.compute_mask_logits(expert, masked_sequence)
                         eidx += 1
                     log_prob = next_token_logits
                 if verbose:
@@ -218,7 +232,7 @@ class MaRCo:
                 rephrased_token_id = argmaxed
                 rephrased_tokens_ids.append(rephrased_token_id)
             else:
-                rephrased_tokens_ids.append(self.tokenizer._convert_token_to_id(tokens[idx]))
+                rephrased_tokens_ids.append(self.tokenizer._convert_token_to_id(masked_sentence_tokens[idx]))
         return self.tokenizer.decode(rephrased_tokens_ids, clean_up_tokenization_spaces=True, skip_special_tokens=True)
 
     def print_token(self, token_logits):
@@ -255,7 +269,7 @@ class MaRCo:
         with torch.no_grad():
             if mask:
                 raw_outputs = model.forward(**subseq_ids).logits
-                # TODO: speed this up tensor aggregation below
+                # TODO: speed up tensor aggregation below
                 mt_idx = torch.nonzero(subseq_ids.input_ids == self.tokenizer.mask_token_id)[:, 1]
                 tensors = []
                 for idx in range(len(mt_idx)):
@@ -264,13 +278,13 @@ class MaRCo:
             else:
                 return model.forward(**subseq_ids).logits
 
-    def score(self, sentence, use_logits: bool = True, normalize: bool = True):
-        #TODO : verify presence of pad_token
+    def score(self, sentence, use_logits: bool = True, normalize: bool = True, verbose: bool = False):
+        # TODO : verify presence of pad_token
         masked_sentences = self.mask_tokens(sentence, self.tokenizer.pad_token + self.tokenizer.mask_token)
         distributions = []
         for model in self.experts:
             if use_logits:
-                logits = self.compute_mask_logits_multiple(model, masked_sentences)
+                logits = self.compute_mask_logits_multiple(model, masked_sentences, verbose=verbose)
                 mask_substitution_scores = softmax(logits, dim=1)
             else:
                 mask_substitution_scores = []
@@ -291,9 +305,29 @@ class MaRCo:
         js_distance = np.average(js_distances, axis=0)
         return js_distance
 
+    def rephrase_incrementally(self, text, threshold=1.2, verbose=False, max_attempts=10):
+        incrementally_rephrased = text
+        idx = 1
+        while True:
+            if len(text.strip()) == 0:
+                break
+            scores = self.score(text, verbose=verbose)
+            if all(scores) < threshold:
+                break
+            masked = self.mask(text, scores=scores, threshold=threshold)
+            incrementally_rephrased = self.rephrase(text, masked, verbose=verbose)
+            if verbose:
+                print(f'step{idx}: {incrementally_rephrased}')
+            if text == incrementally_rephrased or idx == max_attempts:
+                break
+            else:
+                text = incrementally_rephrased
+                idx += 1
+        return incrementally_rephrased
+
 
 if __name__ == '__main__':
-    marco = MaRCo()
+    marco = MaRCo(expert_weights=[-1, 2])
     marco.load_models(["tteofili/gminus", "tteofili/gplus"])
     for text in [
         "White men can't jump",
@@ -311,3 +345,5 @@ if __name__ == '__main__':
         print(f'masked: {masked_text}')
         rephrased = marco.rephrase(text, masked_text)
         print(f'rephrased: {rephrased}')
+        inc_rephrased = marco.rephrase_incrementally(text)
+        print(f'incrementally rephrased: {inc_rephrased}')
