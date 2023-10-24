@@ -328,7 +328,7 @@ class MaRCo:
 
 if __name__ == '__main__':
     marco = MaRCo(expert_weights=[-1, 2])
-    marco.load_models(["tteofili/gminus", "tteofili/gplus"])
+    marco.load_models(["trustyai/gminus", "trustyai/gplus"])
     for text in [
         "White men can't jump",
         "Stand by me, just as long as you fucking stand by me",
