@@ -72,17 +72,21 @@ class MaRCo:
             masked_sentences.append(masked_sentence)
         return masked_sentences
 
-    def train_models(self, dataset_name: str = 'jigsaw_toxicity_pred', perc: int = 100,
-                     data_dir: str = 'jigsaw-toxic-comment-classification-challenge'):
+    def train_models(self, dataset_name: str = 'jigsaw_toxicity_pred', perc: int = 100, expert_feature: str = 'toxic',
+                     data_dir: str = 'jigsaw-toxic-comment-classification-challenge',
+                     td_columns=None):
+
+        if td_columns is None:
+            td_columns = ["comment_text", 'toxic', 'severe_toxic', 'obscene', 'threat', 'insult',
+                          'identity_hate']
 
         ds_size = ['train[:' + str(perc) + '%]', 'test[:' + str(perc) + '%]']
 
         datasets_split = load_dataset(dataset_name, data_dir=data_dir, split=ds_size)
         datasets_split = DatasetDict({'train': datasets_split[0], 'test': datasets_split[1]})
 
-        toxic_datasets = datasets_split.filter(lambda x: int(x['toxic']) == 1)
+        toxic_datasets = datasets_split.filter(lambda x: int(x[expert_feature]) == 1)
 
-        td_columns = ["comment_text", 'toxic', 'severe_toxic', 'obscene', 'threat', 'insult', 'identity_hate']
         tokenized_datasets = toxic_datasets.map(self.tokenize_function, batched=True, num_proc=4,
                                                 remove_columns=td_columns)
 
@@ -97,7 +101,7 @@ class MaRCo:
                                                               forced_bos_token_id=self.tokenizer.bos_token_id)
 
         training_args = TrainingArguments(
-            "gminus-bart",
+            "gminus",
             evaluation_strategy="epoch",
             learning_rate=2e-5,
             weight_decay=0.01
@@ -117,7 +121,7 @@ class MaRCo:
         trainer.save_model('gminus')
 
         # train gplus model
-        nontoxic_datasets = datasets_split.filter(lambda x: int(x['toxic']) == 0)
+        nontoxic_datasets = datasets_split.filter(lambda x: int(x[expert_feature]) == 0)
 
         nontoxic_tokenized_datasets = nontoxic_datasets.map(self.tokenize_function, batched=True, num_proc=4,
                                                             remove_columns=td_columns)
@@ -133,7 +137,7 @@ class MaRCo:
                                                              forced_bos_token_id=self.tokenizer.bos_token_id)
 
         nt_training_args = TrainingArguments(
-            "gplus-bart",
+            "gplus",
             evaluation_strategy="epoch",
             learning_rate=2e-5,
             weight_decay=0.01,
@@ -180,7 +184,9 @@ class MaRCo:
         return token_ids, token_scores
 
     def rephrase(self, original, masked_output, compute_probs: bool = False, verbose: bool = False,
-                 combine_original: bool = False):
+                 combine_original: bool = False, expert_weights: list = None):
+        if expert_weights is None:
+            expert_weights = self.expert_weights
         base_logits = self.compute_mask_logits(self.base, original, mask=False)
         rephrased_tokens_ids = []
         masked_sentence_tokens = self.tokenizer.tokenize(masked_output)
@@ -210,15 +216,14 @@ class MaRCo:
                         expert_logits.append(scores)
                     for eidx in range(len(expert_logits)):
                         tensor = Tensor(expert_logits[eidx])
-                        next_token_logits *= self.expert_weights[eidx] * tensor
+                        next_token_logits *= expert_weights[eidx] * tensor
                     log_prob = next_token_logits
                 else:
                     masked_sequence = self.tokenizer.convert_tokens_to_string(
                         self.tokenizer.convert_ids_to_tokens(current_sentence_ids))
                     eidx = 0
                     for expert in self.experts:
-                        next_token_logits += self.expert_weights[eidx] * self.compute_mask_logits(expert,
-                                                                                                  masked_sequence)
+                        next_token_logits += expert_weights[eidx] * self.compute_mask_logits(expert, masked_sequence)
                         eidx += 1
                     log_prob = next_token_logits
                 if verbose:
@@ -309,7 +314,7 @@ class MaRCo:
             scores = self.score(text, verbose=verbose)
             if all(scores) < threshold:
                 break
-            masked = self.mask(text, scores=scores)
+            masked = self.mask(text, scores=scores, threshold=threshold)
             incrementally_rephrased = self.rephrase(text, masked, verbose=verbose)
             if verbose:
                 print(f'step{idx}: {incrementally_rephrased}')
