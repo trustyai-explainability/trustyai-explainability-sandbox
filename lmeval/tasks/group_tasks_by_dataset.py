@@ -21,24 +21,16 @@ def read_task_list(filename='new_task_list.csv'):
         print(f"Error reading {filename}: {e}")
         sys.exit(1)
 
-def filter_tasks(tasks, min_downloads=10000):
-    """Filter tasks that exist and have more than min_downloads"""
+def filter_tasks(tasks):
+    """Filter tasks that are Tier 1"""
     filtered_tasks = []
     
     for task in tasks:
-        # Check if task exists
-        if task.get('Exists', '').lower() != 'true':
-            continue
-        
-        # Check download count
-        try:
-            downloads = int(task.get('HF dataset downloads', 0))
-            if downloads > min_downloads:
-                filtered_tasks.append(task)
-        except (ValueError, TypeError):
-            continue
+        # Check if task is Tier 1
+        if task.get('Tier', '').strip() == '1':
+            filtered_tasks.append(task)
     
-    print(f"Filtered to {len(filtered_tasks)} tasks with >={min_downloads} downloads that exist")
+    print(f"Filtered to {len(filtered_tasks)} Tier 1 tasks")
     return filtered_tasks
 
 def group_tasks_by_dataset(tasks):
@@ -61,7 +53,7 @@ def group_tasks_by_dataset(tasks):
 def generate_grouping_table(dataset_groups):
     """Generate and display a table of dataset groupings"""
     print("\n" + "="*80)
-    print("DATASET GROUPINGS (Tasks with >10,000 downloads)")
+    print("DATASET GROUPINGS (Tier 1 Tasks)")
     print("="*80)
     
     total_tasks = 0
@@ -111,11 +103,11 @@ def main():
     # Read task list
     tasks = read_task_list('new_task_list.csv')
     
-    # Filter tasks that exist and have >10,000 downloads
-    filtered_tasks = filter_tasks(tasks, min_downloads=10000)
+    # Filter tasks that are Tier 1
+    filtered_tasks = filter_tasks(tasks)
     
     if not filtered_tasks:
-        print("No tasks found that meet the criteria (exist and >10,000 downloads)")
+        print("No Tier 1 tasks found")
         sys.exit(1)
     
     # Group tasks by dataset

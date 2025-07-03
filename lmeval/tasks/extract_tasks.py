@@ -218,7 +218,7 @@ def read_original_task_list(filename='original_task_list.csv'):
         return None
 
 def create_combined_csv(original_tasks, new_task_data, output_filename='new_task_list.csv'):
-    """Create combined CSV with original columns plus Exists and Dataset columns"""
+    """Create combined CSV with original columns plus Exists, Dataset, OpenLLM leaderboard, and Tier columns"""
     try:
         if not original_tasks:
             print("No original tasks to combine with")
@@ -226,30 +226,89 @@ def create_combined_csv(original_tasks, new_task_data, output_filename='new_task
         
         new_task_dict = {task['name']: task for task in new_task_data}
         
-        fieldnames = list(original_tasks[0].keys()) + ['Exists', 'Dataset']
+        fieldnames = list(original_tasks[0].keys()) + ['Exists', 'Dataset', 'OpenLLM leaderboard', 'Tier']
+        
+        # Define OpenLLM leaderboard tasks
+        openllm_tasks = ['ifeval', 'bbh', 'score', 'qpqa', 'mmlu_pro']
+        
+        # First pass: identify existing tasks and their properties
+        existing_tasks = []
+        all_rows = []
         
         matches = 0
+        for task in original_tasks:
+            # Copy all original fields
+            new_row = task.copy()
+            
+            # Add Exists and Dataset columns
+            task_name = task.get('Name', '')
+            if task_name in new_task_dict:
+                new_row['Exists'] = 'true'
+                new_row['Dataset'] = new_task_dict[task_name]['dataset']
+                matches += 1
+            else:
+                new_row['Exists'] = 'false'
+                new_row['Dataset'] = 'Unknown'
+            
+            # Add OpenLLM leaderboard column
+            is_openllm = any(task_name == task or task_name.startswith(task + '_') for task in openllm_tasks)
+            new_row['OpenLLM leaderboard'] = 'true' if is_openllm else 'false'
+            
+            # Convert downloads to numeric for tier calculation
+            try:
+                downloads = int(task.get('HF dataset downloads', 0))
+            except (ValueError, TypeError):
+                downloads = 0
+            
+            # Default tier
+            new_row['Tier'] = '3'
+            
+            # Collect existing tasks for tier calculation
+            if new_row['Exists'] == 'true':
+                existing_tasks.append({
+                    'row': new_row,
+                    'downloads': downloads,
+                    'is_openllm': is_openllm
+                })
+            
+            all_rows.append(new_row)
+        
+        # Calculate tiers
+        # Tier 1: >10,000 downloads OR OpenLLM leaderboard tasks
+        tier1_tasks = []
+        for task in existing_tasks:
+            if task['downloads'] > 10000 or task['is_openllm']:
+                task['row']['Tier'] = '1'
+                tier1_tasks.append(task)
+        
+        # Tier 2: Next 10% by downloads (excluding Tier 1)
+        remaining_tasks = [task for task in existing_tasks if task['row']['Tier'] != '1']
+        if remaining_tasks:
+            # Sort by downloads descending
+            remaining_tasks.sort(key=lambda x: x['downloads'], reverse=True)
+            # Take top 10%
+            tier2_count = max(1, int(len(remaining_tasks) * 0.1))
+            for i in range(min(tier2_count, len(remaining_tasks))):
+                remaining_tasks[i]['row']['Tier'] = '2'
+        
+        # Write the CSV
         with open(output_filename, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            
-            for task in original_tasks:
-                # Copy all original fields
-                new_row = task.copy()
-                
-                # Add Exists and Dataset columns
-                task_name = task.get('Name', '')
-                if task_name in new_task_dict:
-                    new_row['Exists'] = 'true'
-                    new_row['Dataset'] = new_task_dict[task_name]['dataset']
-                    matches += 1
-                else:
-                    new_row['Exists'] = 'false'
-                    new_row['Dataset'] = 'Unknown'
-                
-                writer.writerow(new_row)
+            writer.writerows(all_rows)
+        
+        # Print summary
+        openllm_count = sum(1 for row in all_rows if row['OpenLLM leaderboard'] == 'true')
+        tier1_count = sum(1 for row in all_rows if row['Tier'] == '1')
+        tier2_count = sum(1 for row in all_rows if row['Tier'] == '2')
+        tier3_count = sum(1 for row in all_rows if row['Tier'] == '3')
         
         print(f"Found {matches} matches out of {len(original_tasks)} original tasks")
+        print(f"Added columns:")
+        print(f"- OpenLLM leaderboard tasks: {openllm_count}")
+        print(f"- Tier 1 tasks: {tier1_count}")
+        print(f"- Tier 2 tasks: {tier2_count}")
+        print(f"- Tier 3 tasks: {tier3_count}")
         print(f"Successfully created combined CSV: {output_filename}")
         return True
         
