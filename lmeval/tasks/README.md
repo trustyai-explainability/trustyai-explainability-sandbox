@@ -48,29 +48,30 @@ If no branch is specified, it defaults to `release-0.4.8`.
 
 The script generates the following files:
 
-1. **`tasks.csv`**: Contains task names and their associated datasets
-2. **`new_task_list.csv`**: Combined CSV with original task list data plus existence and dataset information (if `original_task_list.csv` exists)
+1. **`tasks.csv`**: Contains task names, their associated datasets, and evaluation types
+2. **`new_task_list.csv`**: Combined CSV with original task list data plus existence, dataset, evaluation type, OpenLLM leaderboard, and tier information (if `original_task_list.csv` exists)
 
 ### Example Output
 
 **tasks.csv**:
 ```csv
-Name,Dataset
-arc_challenge,ai2_arc
-arc_easy,ai2_arc
-boolq,boolq
-hellaswag,hellaswag
-winogrande,winogrande
-wmdp_bio,wmdp
-wmdp_chem,wmdp
-wmdp_cyber,wmdp
+Name,Dataset,Evaluation Type
+arc_challenge,ai2_arc,multiple_choice
+arc_easy,ai2_arc,multiple_choice
+boolq,boolq,multiple_choice
+hellaswag,hellaswag,multiple_choice
+winogrande,winogrande,multiple_choice
+wmdp_bio,wmdp,multiple_choice
+wmdp_chem,wmdp,multiple_choice
+wmdp_cyber,wmdp,multiple_choice
 ```
 
 **new_task_list.csv** (if original_task_list.csv exists):
 ```csv
-Name,HF dataset downloads,Exists,Dataset
-arc_challenge,219310,true,ai2_arc
-arc_easy,219310,true,ai2_arc
-boolq,158151,true,boolq
-hellaswag,186239,true,hellaswag
+Name,HF dataset downloads,Exists,Dataset,Evaluation Type,OpenLLM leaderboard,Tier
+arc_challenge,219310,true,ai2_arc,multiple_choice,false,1
+arc_easy,219310,true,ai2_arc,multiple_choice,false,1
+boolq,158151,true,boolq,multiple_choice,false,1
+hellaswag,186239,true,hellaswag,multiple_choice,false,1
+ifeval,12345,true,ifeval,generation,true,1
 ```
