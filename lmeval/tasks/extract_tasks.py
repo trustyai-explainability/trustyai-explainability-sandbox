@@ -136,6 +136,7 @@ def get_tasks_from_cli():
                 if len(parts) >= 3:  # Should have at least empty, Group, Config Location, empty
                     task_name = parts[1] if len(parts) > 1 and parts[1] else None
                     yaml_path = parts[2] if len(parts) > 2 and parts[2] else None
+                    eval_type = parts[3] if len(parts) > 3 and parts[3] else "Unknown"
                     
                     if (task_name and yaml_path and 
                         task_name != '' and yaml_path != '' and
@@ -154,7 +155,8 @@ def get_tasks_from_cli():
                         task_data.append({
                             'name': task_name,
                             'yaml_path': yaml_path,
-                            'dataset': dataset
+                            'dataset': dataset,
+                            'eval_type': eval_type
                         })
         
         # Remove duplicates based on task name
@@ -183,14 +185,14 @@ def get_tasks_from_cli():
         return None
 
 def save_simple_csv(task_data, filename='tasks.csv'):
-    """Save task list to CSV file with Name and Dataset columns"""
+    """Save task list to CSV file with Name, Dataset, and Evaluation Type columns"""
     try:
         with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.writer(csvfile)
-            writer.writerow(['Name', 'Dataset'])  # Header
+            writer.writerow(['Name', 'Dataset', 'Evaluation Type'])  # Header
             
             for task in task_data:
-                writer.writerow([task['name'], task['dataset']])
+                writer.writerow([task['name'], task['dataset'], task['eval_type']])
         
         print(f"Successfully saved {len(task_data)} tasks to {filename}")
         return True
@@ -218,7 +220,7 @@ def read_original_task_list(filename='original_task_list.csv'):
         return None
 
 def create_combined_csv(original_tasks, new_task_data, output_filename='new_task_list.csv'):
-    """Create combined CSV with original columns plus Exists and Dataset columns"""
+    """Create combined CSV with original columns plus Exists, Dataset, and Evaluation Type columns"""
     try:
         if not original_tasks:
             print("No original tasks to combine with")
@@ -226,7 +228,7 @@ def create_combined_csv(original_tasks, new_task_data, output_filename='new_task
         
         new_task_dict = {task['name']: task for task in new_task_data}
         
-        fieldnames = list(original_tasks[0].keys()) + ['Exists', 'Dataset']
+        fieldnames = list(original_tasks[0].keys()) + ['Exists', 'Dataset', 'Evaluation Type']
         
         matches = 0
         with open(output_filename, 'w', newline='', encoding='utf-8') as csvfile:
@@ -237,15 +239,17 @@ def create_combined_csv(original_tasks, new_task_data, output_filename='new_task
                 # Copy all original fields
                 new_row = task.copy()
                 
-                # Add Exists and Dataset columns
+                # Add Exists, Dataset, and Evaluation Type columns
                 task_name = task.get('Name', '')
                 if task_name in new_task_dict:
                     new_row['Exists'] = 'true'
                     new_row['Dataset'] = new_task_dict[task_name]['dataset']
+                    new_row['Evaluation Type'] = new_task_dict[task_name]['eval_type']
                     matches += 1
                 else:
                     new_row['Exists'] = 'false'
                     new_row['Dataset'] = 'Unknown'
+                    new_row['Evaluation Type'] = 'Unknown'
                 
                 writer.writerow(new_row)
         
@@ -256,8 +260,6 @@ def create_combined_csv(original_tasks, new_task_data, output_filename='new_task
     except Exception as e:
         print(f"Error creating combined CSV: {e}")
         return False
-
-
 
 def main():
     """Main function to generate task list and create combined CSV"""
